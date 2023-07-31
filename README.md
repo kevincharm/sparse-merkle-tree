@@ -1,6 +1,6 @@
 # Sparse Merkle Tree
 
-Sparse Merkle Tree (SMT) implementation in Solidity with accompanying JavaScript library. This SMT implementation uses `bytes32(0)` as the empty node value so that paths representing empty subtrees in the Merkle proof may be omitted.
+Sparse Merkle Tree (SMT) implementation in Solidity with accompanying JavaScript library. This SMT implementation uses `bytes32(0)` as the empty node value so that paths representing empty subtrees in the Merkle proof may be omitted. This proof compression technique is described by Vitalik in [Optimizing sparse Merkle trees](https://ethresear.ch/t/optimizing-sparse-merkle-trees/3751).
 
 ## Installation
 
@@ -15,7 +15,7 @@ The accompanying client-side JavaScript library extends Tornado Cash's [fixed-me
 Below is an example contract that keeps track of only the current SMT root, and allows updating any leaf with a new value given the old leaf value and the Merkle proof.
 
 ```solidity
-import {SparseMerkleTree} from "@kevincharm/sparse-merkle-tree/contracts/SparseMerkleTree.sol";
+import { SparseMerkleTree } from '@kevincharm/sparse-merkle-tree/contracts/SparseMerkleTree.sol';
 
 /// @notice Example SparseMerkleTree consumer
 contract SMTConsumer {
