@@ -64,6 +64,7 @@ import { SparseMerkleTree } from '@kevincharm/sparse-merkle-tree'
 import { ZeroHash, keccak256, concat, Wallet, Contract } from 'ethers'
 
 // Initialise client representation of an empty SMT
+const TREE_DEPTH = 32
 const smt = new SparseMerkleTree(TREE_DEPTH, [], {
     hashFunction: (left, right) => {
         return BigInt(left) === 0n && BigInt(right) === 0n
