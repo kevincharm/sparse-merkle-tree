@@ -2,8 +2,7 @@ import { expect } from 'chai'
 import { ethers } from 'hardhat'
 import { SMTConsumer, SMTConsumer__factory } from '../typechain-types'
 import { SignerWithAddress } from '@nomicfoundation/hardhat-ethers/signers'
-import { MerkleTree } from 'fixed-merkle-tree'
-import { toProofArgs } from '../lib/toProofArgs'
+import { SparseMerkleTree } from '../lib/SparseMerkleTree'
 
 const TREE_DEPTH = 32
 
@@ -20,13 +19,13 @@ function genHashedAddresses(n: number) {
 describe('SparseMerkleTree', () => {
     let smt: SMTConsumer
     let deployer: SignerWithAddress
-    let merkleTree: MerkleTree
+    let merkleTree: SparseMerkleTree
     beforeEach(async () => {
         ;[deployer] = await ethers.getSigners()
         // Contract
         smt = await new SMTConsumer__factory(deployer).deploy(TREE_DEPTH)
         // Offchain
-        merkleTree = new MerkleTree(TREE_DEPTH, [], {
+        merkleTree = new SparseMerkleTree(TREE_DEPTH, [], {
             hashFunction: (left, right) => {
                 return BigInt(left) === 0n && BigInt(right) === 0n
                     ? ethers.ZeroHash
@@ -34,6 +33,14 @@ describe('SparseMerkleTree', () => {
             },
             zeroElement: ethers.ZeroHash,
         })
+    })
+
+    it('should verify empty proof for uninitialised leaf', async () => {
+        const index = 890547508
+        const { leaf, enables, path } = merkleTree.getProofArgs(index)
+        expect(await smt.computeRoot(leaf as string, index, enables, path as string[])).to.eq(
+            merkleTree.root,
+        )
     })
 
     it('should compute correct roots', async () => {
@@ -46,18 +53,21 @@ describe('SparseMerkleTree', () => {
         {
             const newLeaf = ethers.hexlify(ethers.randomBytes(32))
             merkleTree.update(0, newLeaf)
-            const proof = merkleTree.path(0)
-            const { enables, path } = toProofArgs(proof)
-            expect(await smt.computeRoot(newLeaf, 0, enables, path)).to.eq(merkleTree.root)
+            const { enables, path } = merkleTree.getProofArgs(0)
+            expect(await smt.computeRoot(newLeaf, 0, enables, path as string[])).to.eq(
+                merkleTree.root,
+            )
         }
 
         // update 1st element
         {
             const newLeaf = ethers.hexlify(ethers.randomBytes(32))
             merkleTree.insert(newLeaf)
-            const proof = merkleTree.path(1)
-            const { enables, path } = toProofArgs(proof)
-            expect(await smt.computeRoot(newLeaf, 1, enables, path)).to.eq(merkleTree.root)
+            const index = 1
+            const { enables, path } = merkleTree.getProofArgs(index)
+            expect(await smt.computeRoot(newLeaf, index, enables, path as string[])).to.eq(
+                merkleTree.root,
+            )
         }
     })
 
@@ -65,16 +75,55 @@ describe('SparseMerkleTree', () => {
         expect(merkleTree.root).to.eq(ethers.ZeroHash)
         const hashedAddresses = genHashedAddresses(10)
         for (let i = 0; i < hashedAddresses.length; i++) {
-            // We need to explicitly insert a zero element here for fixed-merkle-tree
-            merkleTree.insert(ethers.ZeroHash)
-            expect(merkleTree.elements.length).to.eq(i + 1)
-            // Get proof of *old* leaf
-            const proof = merkleTree.path(i)
-            const { enables, path } = toProofArgs(proof)
+            // Get proof of *current* leaf
+            const { leaf: oldLeaf, enables, path } = merkleTree.getProofArgs(i)
+            expect(BigInt(oldLeaf)).to.eq(0n)
             // Insert new leaf by updating the newly-inserted zero element with an actual value
-            merkleTree.update(i, hashedAddresses[i])
-            await smt.updateRoot(hashedAddresses[i], ethers.ZeroHash, i, enables, path)
+            merkleTree.insert(hashedAddresses[i])
+            await smt.updateRoot(
+                hashedAddresses[i],
+                oldLeaf as string,
+                i,
+                enables,
+                path as string[],
+            )
             expect(await smt.root()).to.eq(merkleTree.root)
         }
+    })
+
+    it('should compute correct root with zero-value compressed path elements', async () => {
+        expect(merkleTree.root).to.eq(ethers.ZeroHash)
+        const hashedAddresses = genHashedAddresses(10)
+        for (let i = 0; i < hashedAddresses.length; i++) {
+            // Get proof of *current* leaf
+            const { leaf: oldLeaf, enables, path } = merkleTree.getProofArgs(i)
+            expect(BigInt(oldLeaf)).to.eq(0n)
+            // Insert new leaf by updating the newly-inserted zero element with an actual value
+            merkleTree.insert(hashedAddresses[i])
+            await smt.updateRoot(
+                hashedAddresses[i],
+                oldLeaf as string,
+                i,
+                enables,
+                path as string[],
+            )
+            expect(await smt.root()).to.eq(merkleTree.root)
+        }
+
+        // Zero-out elements on the left
+        for (let i = 0; i < 9; i++) {
+            const newLeaf = ethers.ZeroHash
+            const { leaf: oldLeaf, enables, path } = merkleTree.getProofArgs(i)
+            merkleTree.update(i, newLeaf)
+            await smt.updateRoot(newLeaf, oldLeaf as string, i, enables, path as string[])
+        }
+    })
+
+    it('should revert if index out-of-range', async () => {
+        const { leaf, enables, path } = merkleTree.getProofArgs(0)
+        const outOfRangeIndex = 2 ** TREE_DEPTH
+        await expect(smt.computeRoot(leaf as string, outOfRangeIndex, enables, path as string[]))
+            .to.be.revertedWithCustomError(smt, 'OutOfRange')
+            .withArgs(outOfRangeIndex)
     })
 })
