@@ -16,7 +16,7 @@
     "format:check": "yarn prettier './contracts/*|./lib/*|./scripts/*|./test/*|hardhat.config.ts' --check",
     "test": "yarn hardhat test",
     "coverage": "yarn hardhat coverage",
-    "build": "tsc",
+    "build": "yarn hardhat compile && tsc",
     "prepublish": "yarn build"
   },
   "devDependencies": {
