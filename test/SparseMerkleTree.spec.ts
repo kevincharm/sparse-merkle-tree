@@ -61,7 +61,8 @@ describe('SparseMerkleTree', () => {
 
         // update 1st element
         {
-            const newLeaf = ethers.hexlify(ethers.randomBytes(32))
+            // const newLeaf = ethers.hexlify(ethers.randomBytes(32))
+            const newLeaf = ethers.keccak256(ethers.Wallet.createRandom().address)
             merkleTree.insert(newLeaf)
             const index = 1
             const { enables, path } = merkleTree.getProofArgs(index)
@@ -75,11 +76,9 @@ describe('SparseMerkleTree', () => {
         expect(merkleTree.root).to.eq(ethers.ZeroHash)
         const hashedAddresses = genHashedAddresses(10)
         for (let i = 0; i < hashedAddresses.length; i++) {
-            // Get proof of *current* leaf
-            const { leaf: oldLeaf, enables, path } = merkleTree.getProofArgs(i)
-            expect(BigInt(oldLeaf)).to.eq(0n)
             // Insert new leaf by updating the newly-inserted zero element with an actual value
-            merkleTree.insert(hashedAddresses[i])
+            const { leaf: oldLeaf, enables, path } = merkleTree.insert(hashedAddresses[i])
+            expect(BigInt(oldLeaf)).to.eq(0n)
             await smt.updateRoot(
                 hashedAddresses[i],
                 oldLeaf as string,
