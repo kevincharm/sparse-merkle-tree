@@ -2,21 +2,8 @@
   "name": "@kevincharm/sparse-merkle-tree",
   "version": "1.0.0",
   "description": "Sparse Merkle Tree implementation in Solidity with accompanying JS library",
-  "keywords": [
-    "sparse",
-    "merkle",
-    "tree",
-    "ethereum",
-    "evm",
-    "solidity"
-  ],
-  "files": [
-    "package.json",
-    "dist/lib",
-    "contracts",
-    "LICENSE",
-    "README.md"
-  ],
+  "keywords": ["sparse", "merkle", "tree", "ethereum", "evm", "solidity"],
+  "files": ["package.json", "dist/lib", "contracts", "LICENSE", "README.md"],
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
   "author": "kevincharm",
@@ -30,7 +17,7 @@
     "test": "yarn hardhat test",
     "coverage": "yarn hardhat coverage",
     "build": "yarn hardhat compile && tsc",
-    "prepublish": "yarn build"
+    "prepack": "yarn build"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
