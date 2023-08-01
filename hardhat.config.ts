@@ -15,6 +15,9 @@ const config: HardhatUserConfig = {
             },
         },
     },
+    gasReporter: {
+        enabled: true,
+    },
 }
 
 export default config

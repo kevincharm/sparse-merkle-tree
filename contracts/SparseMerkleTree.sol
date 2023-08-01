@@ -5,6 +5,7 @@ pragma solidity ^0.8;
 /// @author kevincharm
 /// @notice Optimised SMT implementation
 library SparseMerkleTree {
+    error InvalidTreeDepth(uint16 treeDepth);
     error OutOfRange(uint256 index);
 
     /// @notice keccak hash, but returns 0 if both inputs are 0
@@ -33,13 +34,17 @@ library SparseMerkleTree {
     /// @param path Proof path; elements only need to be defined for non-zero
     ///     siblings
     function computeRoot(
-        uint8 treeDepth,
+        uint16 treeDepth,
         bytes32 leaf,
         uint256 index,
         uint256 enables,
         bytes32[] calldata path
     ) internal pure returns (bytes32) {
-        if (index >= 2 ** treeDepth) revert OutOfRange(index);
+        // Tree depth must be in [0, 256]
+        if (treeDepth > 256) revert InvalidTreeDepth(treeDepth);
+        // Index must be within the capacity of the tree
+        if (treeDepth < 256 && index >= 2 ** treeDepth)
+            revert OutOfRange(index);
         // Keep track of the paths already consumed
         uint256 p;
         bytes32 sibling;

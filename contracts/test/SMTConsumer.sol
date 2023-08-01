@@ -6,7 +6,7 @@ import {SparseMerkleTree} from "../SparseMerkleTree.sol";
 /// @notice Example SparseMerkleTree consumer
 contract SMTConsumer {
     /// @notice Depth of Merkle tree
-    uint8 immutable treeDepth;
+    uint16 immutable treeDepth;
     /// @notice Merkle root
     bytes32 public root;
 
@@ -17,7 +17,7 @@ contract SMTConsumer {
         bytes32[] path
     );
 
-    constructor(uint8 treeDepth_) {
+    constructor(uint16 treeDepth_) {
         treeDepth = treeDepth_;
     }
 

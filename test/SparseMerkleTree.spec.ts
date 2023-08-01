@@ -125,4 +125,31 @@ describe('SparseMerkleTree', () => {
             .to.be.revertedWithCustomError(smt, 'OutOfRange')
             .withArgs(outOfRangeIndex)
     })
+
+    it('should compute roots with depth=256', async () => {
+        // Redeploy with treeDepth=256 (ok)
+        smt = await new SMTConsumer__factory(deployer).deploy(256)
+        // Compute zero root of last index (i=2**256-1)
+        expect(await smt.computeRoot(ethers.ZeroHash, ethers.MaxUint256, 0, [])).to.eq(
+            ethers.ZeroHash,
+        )
+    })
+
+    it('should revert when trying to compute out-of-range index', async () => {
+        // Redeploy with treeDepth=255 (ok)
+        smt = await new SMTConsumer__factory(deployer).deploy(255)
+        // Compute zero root of last index (i=2**256-1)
+        await expect(smt.computeRoot(ethers.ZeroHash, ethers.MaxUint256, 0, []))
+            .to.be.revertedWithCustomError(smt, 'OutOfRange')
+            .withArgs(ethers.MaxUint256)
+    })
+
+    it('should revert if specified tree depth is >256', async () => {
+        // Redeploy with treeDepth=257 (not ok, but allowed by consumer)
+        smt = await new SMTConsumer__factory(deployer).deploy(257)
+        // Try to compute zero root, should fail
+        await expect(smt.computeRoot(ethers.ZeroHash, ethers.MaxUint256, 0, []))
+            .to.be.revertedWithCustomError(smt, 'InvalidTreeDepth')
+            .withArgs(257)
+    })
 })
