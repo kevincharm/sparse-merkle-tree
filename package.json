@@ -1,9 +1,22 @@
 {
   "name": "@kevincharm/sparse-merkle-tree",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Sparse Merkle Tree implementation in Solidity with accompanying JS library",
-  "keywords": ["sparse", "merkle", "tree", "ethereum", "evm", "solidity"],
-  "files": ["package.json", "dist/lib", "contracts", "LICENSE", "README.md"],
+  "keywords": [
+    "sparse",
+    "merkle",
+    "tree",
+    "ethereum",
+    "evm",
+    "solidity"
+  ],
+  "files": [
+    "package.json",
+    "dist/lib",
+    "contracts",
+    "LICENSE",
+    "README.md"
+  ],
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
   "author": "kevincharm",
