@@ -2,9 +2,9 @@ import { expect } from 'chai'
 import { ethers } from 'hardhat'
 import { SMTConsumer, SMTConsumer__factory } from '../typechain-types'
 import { SignerWithAddress } from '@nomicfoundation/hardhat-ethers/signers'
-import { SparseMerkleTree } from '../lib/SparseMerkleTree'
+import { SparseMerkleTreeKV } from '../lib/SparseMerkleTreeKV'
 
-const TREE_DEPTH = 32
+const TREE_DEPTH = 256
 
 function genAddresses(n: number) {
     return Array(n)
@@ -16,60 +16,63 @@ function genHashedAddresses(n: number) {
     return genAddresses(n).map((address) => ethers.keccak256(address))
 }
 
+function hexPad32(input: string) {
+    if (!input.startsWith('0x')) {
+        throw new Error(`Invalid hex value: ${input}`)
+    }
+    if (input.length > 2 + 32 * 2) {
+        throw new Error(`Invalid hex length: ${input}`)
+    }
+    return `0x${input.slice(2).padStart(32 * 2, '0')}`
+}
+
 describe('SparseMerkleTree', () => {
     let smt: SMTConsumer
     let deployer: SignerWithAddress
-    let merkleTree: SparseMerkleTree
+    let merkleTree: SparseMerkleTreeKV
     beforeEach(async () => {
         ;[deployer] = await ethers.getSigners()
         // Contract
         smt = await new SMTConsumer__factory(deployer).deploy(TREE_DEPTH)
         // Offchain
-        merkleTree = new SparseMerkleTree(TREE_DEPTH, [], {
-            hashFunction: (left, right) => {
-                return BigInt(left) === 0n && BigInt(right) === 0n
-                    ? ethers.ZeroHash
-                    : ethers.keccak256(ethers.concat([left as string, right as string]))
-            },
-            zeroElement: ethers.ZeroHash,
-        })
+        merkleTree = new SparseMerkleTreeKV()
     })
 
     it('should verify empty proof for uninitialised leaf', async () => {
-        const index = 890547508
-        const { leaf, enables, path } = merkleTree.getProofArgs(index)
-        expect(await smt.computeRoot(leaf as string, index, enables, path as string[])).to.eq(
-            merkleTree.root,
-        )
+        const fooKey = ethers.solidityPackedKeccak256(['string'], ['foo'])
+        const fooProof = merkleTree.get(fooKey)
+        expect(
+            merkleTree.verifyProof(
+                fooProof.leaf,
+                fooProof.index,
+                fooProof.enables,
+                fooProof.siblings,
+            ),
+        ).to.eq(true)
+        expect(merkleTree.root).to.eq(0n)
+        expect(
+            await smt.computeRoot(
+                fooProof.leaf,
+                fooProof.index,
+                fooProof.enables,
+                fooProof.siblings,
+            ),
+        ).to.eq(ethers.ZeroHash)
     })
 
-    it('should compute correct roots', async () => {
-        expect(merkleTree.root).to.eq(ethers.ZeroHash)
-        // 0
-        merkleTree.insert(ethers.ZeroHash)
-        expect(merkleTree.root).to.eq(ethers.ZeroHash)
-
-        // update 0th element with non-zero value
-        {
-            const newLeaf = ethers.hexlify(ethers.randomBytes(32))
-            merkleTree.update(0, newLeaf)
-            const { enables, path } = merkleTree.getProofArgs(0)
-            expect(await smt.computeRoot(newLeaf, 0, enables, path as string[])).to.eq(
-                merkleTree.root,
-            )
-        }
-
-        // update 1st element
-        {
-            // const newLeaf = ethers.hexlify(ethers.randomBytes(32))
-            const newLeaf = ethers.keccak256(ethers.Wallet.createRandom().address)
-            merkleTree.insert(newLeaf)
-            const index = 1
-            const { enables, path } = merkleTree.getProofArgs(index)
-            expect(await smt.computeRoot(newLeaf, index, enables, path as string[])).to.eq(
-                merkleTree.root,
-            )
-        }
+    it('should verify after insertion', async () => {
+        const key = ethers.solidityPackedKeccak256(['string'], ['foo'])
+        merkleTree.insert(key, '0xcafebabe')
+        const key2 = ethers.solidityPackedKeccak256(['string'], ['bar'])
+        merkleTree.insert(key2, '0xdeadbeef')
+        const foo = merkleTree.get(key)!
+        expect(foo.value).to.eq(hexPad32('0xcafebabe'))
+        const bar = merkleTree.get(key2)!
+        expect(bar.value).to.eq(hexPad32('0xdeadbeef'))
+        expect(merkleTree.verifyProof(bar.leaf, bar.index, bar.enables, bar.siblings)).to.eq(true)
+        expect(await smt.computeRoot(bar.leaf, bar.index, bar.enables, bar.siblings)).to.eq(
+            merkleTree.root,
+        )
     })
 
     it('should compute correct root after inserting', async () => {
@@ -77,71 +80,25 @@ describe('SparseMerkleTree', () => {
         const hashedAddresses = genHashedAddresses(10)
         for (let i = 0; i < hashedAddresses.length; i++) {
             // Insert new leaf by updating the newly-inserted zero element with an actual value
-            const { leaf: oldLeaf, enables, path } = merkleTree.insert(hashedAddresses[i])
-            expect(BigInt(oldLeaf)).to.eq(0n)
-            await smt.updateRoot(
-                hashedAddresses[i],
-                oldLeaf as string,
-                i,
+            const {
+                newLeaf,
+                leaf: oldLeaf,
+                index,
                 enables,
-                path as string[],
-            )
+                siblings,
+            } = merkleTree.insert(hashedAddresses[i], ethers.hashMessage('hello, world!'))
+            await smt.updateRoot(newLeaf, oldLeaf, index, enables, siblings)
             expect(await smt.root()).to.eq(merkleTree.root)
-        }
-    })
-
-    it('should compute correct root with zero-value compressed path elements', async () => {
-        expect(merkleTree.root).to.eq(ethers.ZeroHash)
-        const hashedAddresses = genHashedAddresses(10)
-        for (let i = 0; i < hashedAddresses.length; i++) {
-            // Get proof of *current* leaf
-            const { leaf: oldLeaf, enables, path } = merkleTree.getProofArgs(i)
-            expect(BigInt(oldLeaf)).to.eq(0n)
-            // Insert new leaf by updating the newly-inserted zero element with an actual value
-            merkleTree.insert(hashedAddresses[i])
-            await smt.updateRoot(
-                hashedAddresses[i],
-                oldLeaf as string,
-                i,
-                enables,
-                path as string[],
-            )
-            expect(await smt.root()).to.eq(merkleTree.root)
-        }
-
-        // Zero-out elements on the left
-        for (let i = 0; i < 9; i++) {
-            const newLeaf = ethers.ZeroHash
-            const { leaf: oldLeaf, enables, path } = merkleTree.getProofArgs(i)
-            merkleTree.update(i, newLeaf)
-            await smt.updateRoot(newLeaf, oldLeaf as string, i, enables, path as string[])
         }
     })
 
     it('should revert if index out-of-range', async () => {
-        const { leaf, enables, path } = merkleTree.getProofArgs(0)
-        const outOfRangeIndex = 2 ** TREE_DEPTH
-        await expect(smt.computeRoot(leaf as string, outOfRangeIndex, enables, path as string[]))
+        smt = await new SMTConsumer__factory(deployer).deploy(32)
+        const { leaf, enables, siblings } = merkleTree.get('0xcafebabe')
+        const outOfRangeIndex = 2 ** 33 - 1
+        await expect(smt.computeRoot(leaf, outOfRangeIndex, enables, siblings))
             .to.be.revertedWithCustomError(smt, 'OutOfRange')
             .withArgs(outOfRangeIndex)
-    })
-
-    it('should compute roots with depth=256', async () => {
-        // Redeploy with treeDepth=256 (ok)
-        smt = await new SMTConsumer__factory(deployer).deploy(256)
-        // Compute zero root of last index (i=2**256-1)
-        expect(await smt.computeRoot(ethers.ZeroHash, ethers.MaxUint256, 0, [])).to.eq(
-            ethers.ZeroHash,
-        )
-    })
-
-    it('should revert when trying to compute out-of-range index', async () => {
-        // Redeploy with treeDepth=255 (ok)
-        smt = await new SMTConsumer__factory(deployer).deploy(255)
-        // Compute zero root of last index (i=2**256-1)
-        await expect(smt.computeRoot(ethers.ZeroHash, ethers.MaxUint256, 0, []))
-            .to.be.revertedWithCustomError(smt, 'OutOfRange')
-            .withArgs(ethers.MaxUint256)
     })
 
     it('should revert if specified tree depth is >256', async () => {

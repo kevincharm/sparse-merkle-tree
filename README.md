@@ -5,10 +5,10 @@ Sparse Merkle Tree (SMT) implementation in Solidity with accompanying JavaScript
 ## Installation
 
 ```sh
-yarn add @kevincharm/sparse-merkle-tree fixed-merkle-tree
+yarn add @kevincharm/sparse-merkle-tree @noble/hashes
 ```
 
-The accompanying client-side JavaScript library extends Tornado Cash's [fixed-merkle-tree](https://github.com/tornadocash/fixed-merkle-tree), which is required as a peer dependency.
+`@noble/hashes` is required as a peer dependency for the JS library.
 
 ## Onchain usage
 
@@ -20,13 +20,13 @@ import { SparseMerkleTree } from '@kevincharm/sparse-merkle-tree/contracts/Spars
 /// @notice Example SparseMerkleTree consumer
 contract SMTConsumer {
     /// @notice Depth of Merkle tree
-    uint8 immutable treeDepth;
+    uint16 immutable treeDepth;
     /// @notice Current Merkle root
     bytes32 public root;
 
     /// @param treeDepth_ The tree depth determines the capacity of the tree,
     ///     and must not change. `capacity = 2**treeDepth`
-    constructor(uint8 treeDepth_) {
+    constructor(uint16 treeDepth_) {
         treeDepth = treeDepth_;
     }
 
@@ -60,36 +60,23 @@ contract SMTConsumer {
 Below is an example JavaScript snippet that instantiates an SMT, then inserts a new leaf into the SMT, and finally submits the update to a contract using the generated Merkle proofs.
 
 ```ts
-import { SparseMerkleTree } from '@kevincharm/sparse-merkle-tree'
-import { ZeroHash, keccak256, concat, Wallet, Contract } from 'ethers'
+import { SparseMerkleTreeKV } from '@kevincharm/sparse-merkle-tree'
+import { ZeroHash, keccak256, concat, hashMessage, Wallet, Contract } from 'ethers'
 
 // Initialise client representation of an empty SMT
-const TREE_DEPTH = 32
-const smt = new SparseMerkleTree(TREE_DEPTH, [], {
-    hashFunction: (left, right) => {
-        return BigInt(left) === 0n && BigInt(right) === 0n
-            ? ZeroHash
-            : keccak256(concat([left as string, right as string]))
-    },
-    zeroElement: ZeroHash,
-})
+const smt = new SparseMerkleTreeKV()
 
-// Insert a new leaf
-const newLeaf = keccak256(keccak256(Wallet.createRandom().address))
-const { leaf: oldLeaf, index, enables, path } = smt.insert(newLeaf)
+// Insert a new (K,V) entry
+const key = keccak256(Wallet.createRandom().address)
+const value = hashMessage('Fred Fredburger')
+const { newLeaf, leaf: oldLeaf, index, enables, siblings } = smt.insert(key, value)
 // Connect to the contract that is consuming the SMT library
-const smtConsumer = new Contract(...)
+const smtConsumer = new Contract(/** ... */)
 // We update the SMT onchain by providing:
 //  - The new value of the leaf
 //  - The proof of membership of the old leaf value
-await smtConsumer.updateRoot(
-    newLeaf /** new leaf value */,
-    oldLeaf as string,
-    index,
-    enables,
-    path as string[],
-)
-// After the update, the onchain SMT should be synced with the client-side
+await smtConsumer.updateRoot(newLeaf, oldLeaf, index, enables, siblings)
+// The onchain SMT should now be synced with the client-side
 assert((await smtConsumer.root()) === smt.root)
 ```
 
