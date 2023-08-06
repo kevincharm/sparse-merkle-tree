@@ -1,6 +1,6 @@
 {
   "name": "@kevincharm/sparse-merkle-tree",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Sparse Merkle Tree implementation in Solidity with accompanying JS library",
   "keywords": [
     "sparse",
