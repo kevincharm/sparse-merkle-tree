@@ -1,30 +1,59 @@
-import {
-    HashFunction,
-    DeserialiserFunction,
-    SerialiserFunction,
-    SparseMerkleTreeKVOptions,
-    Proof,
-    UpdateProof,
-} from './SparseMerkleTree'
 import { keccak, deserialise, serialise } from './utils'
 
-export const SMT_DEPTH = 256
+export interface Proof {
+    /** Whether or not the entry exists in the db */
+    exists: boolean
+    /** Leaf hash */
+    leaf: string
+    /** If exists, then will have a value */
+    value: string | null
+    /** Index, derived from key */
+    index: bigint
+    /** 256-bit number; each bit represents whether a sibling subtree is nonzero */
+    enables: bigint
+    /** List of nonzero sibling subtrees */
+    siblings: string[]
+}
 
-export const ZERO = 0n
+export interface UpdateProof extends Proof {
+    /** H(key, value, 1) */
+    newLeaf: string
+}
 
 /**
- * SparseMerkleTreeKV
- * SMT-backed key-value database.
+ * Hash function that takes 1-3 256-bit numbers and returns a hash digest that
+ * is also 256 bits.
  */
-export class SparseMerkleTreeKV {
+export type HashFunction = (...inputs: bigint[]) => bigint
+
+export type DeserialiserFunction = (input: string) => bigint
+
+export type SerialiserFunction = (input: bigint) => string
+
+export interface SparseMerkleTreeKVOptions {
+    zeroElement?: bigint
+    hashFn?: HashFunction
+    deserialiserFn?: DeserialiserFunction
+    serialiserFn?: SerialiserFunction
+}
+
+/**
+ * SparseMerkleTree
+ * Raw sparse Merkle tree implementation
+ */
+export class SparseMerkleTree {
     public db: Map<bigint, [bigint, bigint, bigint?]> = new Map()
     private _root: bigint
+    private _depth: number
+    private _zeroElement: bigint
     private _hashFn: HashFunction
     private _deserialiserFn: DeserialiserFunction
     private _serialiserFn: SerialiserFunction
 
-    constructor(options: SparseMerkleTreeKVOptions = {}) {
+    constructor(depth: number, options: SparseMerkleTreeKVOptions = {}) {
         this._root = 0n
+        this._depth = depth
+        this._zeroElement = options.zeroElement || 0n
         this._hashFn = options.hashFn || keccak
         this._deserialiserFn = options.deserialiserFn || deserialise
         this._serialiserFn = options.serialiserFn || serialise
@@ -39,26 +68,24 @@ export class SparseMerkleTreeKV {
     }
 
     /**
-     * Get a proof of membership (or non-membership) of a key
+     * Get a proof of membership (or non-membership) of a leaf
      *
-     * @param key Key
+     * @param index Index of leaf
      * @returns {Proof} Proof of membership (or non-membership)
      */
-    public get(key: string): Proof {
-        const index = this.hash(this._deserialiserFn(key))
-
+    public get(index: bigint): Proof {
         let enables = 0n
         const siblings: bigint[] = []
         let child = this._root
         // root->leaf
-        for (let i = 0; i < SMT_DEPTH; i++) {
+        for (let i = 0; i < this._depth; i++) {
             // MSB->LSB
-            let j = Number((index >> BigInt(SMT_DEPTH - i - 1)) & 1n) as 0 | 1
-            const sibling = this.db.get(child)?.[j ^ 1] || ZERO
-            child = this.db.get(child)?.[j] || ZERO
+            let j = Number((index >> BigInt(this._depth - i - 1)) & 1n) as 0 | 1
+            const sibling = this.db.get(child)?.[j ^ 1] || this._zeroElement
+            child = this.db.get(child)?.[j] || this._zeroElement
             if (sibling > 0n) {
                 siblings.unshift(sibling)
-                enables |= 1n << BigInt(SMT_DEPTH - i - 1)
+                enables |= 1n << BigInt(this._depth - i - 1)
             }
         }
         let exists = true
@@ -93,11 +120,14 @@ export class SparseMerkleTreeKV {
         // rebuild root from leaf->root
         let root = this._deserialiserFn(leaf)
         let s = 0
-        for (let i = 0; i < SMT_DEPTH; i++) {
+        for (let i = 0; i < this._depth; i++) {
             // LSB->MSB
             let j = Number((index >> BigInt(i)) & 1n) as 0 | 1
             const isRightChild = Boolean(j)
-            const sibling = (enables >> BigInt(i)) & 1n ? this._deserialiserFn(siblings[s++]) : ZERO
+            const sibling =
+                (enables >> BigInt(i)) & 1n
+                    ? this._deserialiserFn(siblings[s++])
+                    : this._zeroElement
             const children: [bigint, bigint] = isRightChild ? [sibling, root] : [root, sibling]
             // Create new parent hash & store
             root = this.hash(...children)
@@ -108,91 +138,83 @@ export class SparseMerkleTreeKV {
     /**
      * Walk down the tree to determine whether a key exists in the database.
      *
-     * @param key
+     * @param index Index of leaf
      * @returns true if key exists
      */
-    public exists(key: bigint): boolean {
-        const index = this.hash(key)
-
+    public exists(index: bigint): boolean {
         let leaf = this._root
-        for (let i = 0; i < SMT_DEPTH; i++) {
+        for (let i = 0; i < this._depth; i++) {
             // MSB->LSB
-            let j = Number((index >> BigInt(SMT_DEPTH - i - 1)) & 1n) as 0 | 1
-            leaf = this.db.get(leaf)?.[j] || ZERO
-            if (leaf === ZERO) break
+            let j = Number((index >> BigInt(this._depth - i - 1)) & 1n) as 0 | 1
+            leaf = this.db.get(leaf)?.[j] || this._zeroElement
+            if (leaf === this._zeroElement) break
         }
-        return leaf !== ZERO
+        return leaf !== this._zeroElement
     }
 
     /**
      * Insert a (key,value) into the database. Throws if key already exists.
      *
-     * @param key Key
-     * @param value Value
+     * @param index Index of leaf
+     * @param leaf Value of leaf
      * @returns {Proof} Membership of previous (key,value) leaf
      */
-    public insert(key: string, value: string): UpdateProof {
-        const key_ = this._deserialiserFn(key)
-        const index = this.hash(key_)
-        if (this.exists(key_)) {
-            throw new Error(`Leaf with key ${key_}@${index} already exists!`)
+    public insert(index: bigint, leaf: string): UpdateProof {
+        if (this.exists(index)) {
+            throw new Error(`Leaf at index ${index} already exists!`)
         }
 
-        return this.upsert(key, value)
+        return this.upsert(index, leaf)
     }
 
     /**
      * Update a value belonging to an existing key. Throws if key does not exist.
      *
-     * @param key Key
-     * @param value New value
+     * @param index Index of leaf
+     * @param newLeaf New value of leaf
      * @returns {Proof} Membership of previous (key,value) leaf
      */
-    public update(key: string, value: string): UpdateProof {
-        const key_ = this._deserialiserFn(key)
-        const index = this.hash(key_)
-        if (!this.exists(key_)) {
-            throw new Error(`Leaf with key ${key}@${index} does not exist!`)
+    public update(index: bigint, newLeaf: string): UpdateProof {
+        if (!this.exists(index)) {
+            throw new Error(`Leaf at index ${index} does not exist!`)
         }
 
-        return this.upsert(key, value)
+        return this.upsert(index, newLeaf)
     }
 
     /**
-     * Update a value at key, regardless of whether it already exists or not.
+     * Update the value of a leaf at a specified index
      *
-     * @param key Key
-     * @param value Value
+     * @param index Index of leaf
+     * @param newLeaf_ New value of leaf
      * @returns {Proof} Membership of previous (key,value) leaf
      */
-    private upsert(key: string, value: string): UpdateProof {
-        const key_ = this._deserialiserFn(key)
-        const value_ = this._deserialiserFn(value)
-        const proof = this.get(key)
+    private upsert(index: bigint, newLeaf_: string): UpdateProof {
+        const newLeaf = this._deserialiserFn(newLeaf_)
+        const proof = this.get(index)
 
         // 1. Walk root->leaf and delete parent hashes (collect siblings while
         // we're at it)
         const siblings: bigint[] = []
         let nextParent = this._root
-        for (let i = 0; i < SMT_DEPTH; i++) {
+        for (let i = 0; i < this._depth; i++) {
             const currParent = nextParent
             // MSB->LSB
-            let j = Number((proof.index >> BigInt(SMT_DEPTH - i - 1)) & 1n) as 0 | 1
+            let j = Number((proof.index >> BigInt(this._depth - i - 1)) & 1n) as 0 | 1
             // Get children before we delete this parent entry
-            const sibling = this.db.get(nextParent)?.[j ^ 1] || ZERO
+            const sibling = this.db.get(nextParent)?.[j ^ 1] || this._zeroElement
             siblings.push(sibling)
-            nextParent = this.db.get(nextParent)?.[j] || ZERO
+            nextParent = this.db.get(nextParent)?.[j] || this._zeroElement
             // Delete this parent entry
             this.db.delete(currParent)
         }
 
         // 2. Insert new leaf
-        const leaf = this.hash(key_, value_, 1n)
-        this.db.set(leaf, [key_, value_, 1n])
+        this.db.set(newLeaf, [index, newLeaf, 1n])
 
         // 3. Walk leaf->root and create parent hashes
-        let child = leaf
-        for (let i = 0; i < SMT_DEPTH; i++) {
+        let child = newLeaf
+        for (let i = 0; i < this._depth; i++) {
             // LSB->MSB
             let j = Number((proof.index >> BigInt(i)) & 1n) as 0 | 1
             const isRightChild = Boolean(j)
@@ -206,7 +228,7 @@ export class SparseMerkleTreeKV {
         this._root = child
 
         return {
-            newLeaf: this._serialiserFn(leaf),
+            newLeaf: this._serialiserFn(newLeaf),
             ...proof,
         }
     }
