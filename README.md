@@ -30,6 +30,15 @@ contract SMTConsumer {
         treeDepth = treeDepth_;
     }
 
+    function computeRoot(
+        bytes32 leaf,
+        uint256 index,
+        uint256 enables,
+        bytes32[] calldata path
+    ) public view returns (bytes32) {
+        return SparseMerkleTree.computeRoot(treeDepth, leaf, index, enables, path);
+    }
+
     /// @notice Update a leaf in the tree, producing a new root.
     /// @param newLeaf New value of leaf
     /// @param oldLeaf Current leaf
@@ -37,20 +46,20 @@ contract SMTConsumer {
     ///     proof path elements
     /// @param enables Each bit determines whether a proof path element should
     ///     be used (1) or a zero-value hash (0)
-    /// @param path Proof path; elements only need to be defined for non-zero
+    /// @param siblings Proof path; elements only need to be defined for non-zero
     ///     siblings
     function updateRoot(
         bytes32 newLeaf,
         bytes32 oldLeaf,
         uint256 index,
         uint256 enables,
-        bytes32[] calldata path
-    ) external returns (bytes32) {
-        if (root != SparseMerkleTree.computeRoot(oldLeaf, index, enables, path)) {
-            revert InvalidProof(oldLeaf, index, enables, path);
+        bytes32[] calldata siblings
+    ) public returns (bytes32) {
+        if (root != computeRoot(oldLeaf, index, enables, siblings)) {
+            revert InvalidProof(oldLeaf, index, enables, siblings);
         }
         // Replace with new leaf and compute new root
-        return (root = SparseMerkleTree.computeRoot(newLeaf, index, enables, path));
+        return (root = computeRoot(newLeaf, index, enables, siblings));
     }
 }
 ```
