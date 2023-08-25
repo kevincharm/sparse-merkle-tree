@@ -1,9 +1,16 @@
 import { expect } from 'chai'
 import { ethers } from 'hardhat'
-import { SMTConsumer, SMTConsumer__factory, SparseMerkleTree__factory } from '../typechain-types'
+import {
+    AddressKeyedSMT,
+    AddressKeyedSMT__factory,
+    SMTConsumer,
+    SMTConsumer__factory,
+    SparseMerkleTree__factory,
+} from '../typechain-types'
 import { SignerWithAddress } from '@nomicfoundation/hardhat-ethers/signers'
 import { SparseMerkleTreeKV } from '../lib/SparseMerkleTreeKV'
-import { SparseMerkleTree as SparseMerkleTreeJS } from '../lib/SparseMerkleTree'
+import { SparseMerkleTree, SparseMerkleTree as SparseMerkleTreeJS } from '../lib/SparseMerkleTree'
+import { solidityPackedKeccak256 } from 'ethers'
 
 function genAddresses(n: number) {
     return Array(n)
@@ -25,12 +32,18 @@ function hexPad32(input: string) {
     return `0x${input.slice(2).padStart(32 * 2, '0')}`
 }
 
+function hashString(value: string) {
+    return ethers.solidityPackedKeccak256(['string'], [value])
+}
+
 describe('SparseMerkleTree', () => {
-    const KV_TREE_DEPTH = 256
     let smt: SMTConsumer
     let deployer: SignerWithAddress
+    let bob: SignerWithAddress
+    let alice: SignerWithAddress
 
-    describe('KV (d=256)', () => {
+    describe(`KV (d=256)`, () => {
+        const KV_TREE_DEPTH = 256
         let merkleTree: SparseMerkleTreeKV
         beforeEach(async () => {
             ;[deployer] = await ethers.getSigners()
@@ -106,6 +119,92 @@ describe('SparseMerkleTree', () => {
             await expect(smt.computeRoot(ethers.ZeroHash, ethers.MaxUint256, 0, []))
                 .to.be.revertedWithCustomError(new SparseMerkleTree__factory(), 'InvalidTreeDepth')
                 .withArgs(257)
+        })
+    })
+
+    describe(`Address-keyed KV (d=160)`, () => {
+        let merkleTree: SparseMerkleTree
+        let smt: AddressKeyedSMT
+        beforeEach(async () => {
+            ;[deployer, bob, alice] = await ethers.getSigners()
+            // Contract
+            smt = await new AddressKeyedSMT__factory(deployer).deploy(160)
+            // Offchain
+            merkleTree = new SparseMerkleTree(160)
+        })
+
+        it('should verify after insertion', async () => {
+            // Insert
+            const bobInsertProof = merkleTree.insert(BigInt(bob.address), hashString('cafe babe'))
+            await smt.update(
+                bob.address,
+                'cafe babe',
+                bobInsertProof.leaf,
+                bobInsertProof.enables,
+                bobInsertProof.siblings,
+            )
+            expect(await smt.root()).eq(merkleTree.root)
+            const aliceInsertProof = merkleTree.insert(
+                BigInt(alice.address),
+                hashString('dead beef'),
+            )
+            await smt.update(
+                alice.address,
+                'dead beef',
+                aliceInsertProof.leaf,
+                aliceInsertProof.enables,
+                aliceInsertProof.siblings,
+            )
+            expect(await smt.root()).eq(merkleTree.root)
+            // Verify values
+            const bobsValue = merkleTree.get(BigInt(bob.address))!
+            expect(bobsValue.value).to.eq(hashString('cafe babe'))
+            const alicesValue = merkleTree.get(BigInt(alice.address))!
+            expect(alicesValue.value).to.eq(hashString('dead beef'))
+            expect(
+                merkleTree.verifyProof(
+                    bobsValue.leaf,
+                    bobsValue.index,
+                    bobsValue.enables,
+                    bobsValue.siblings,
+                ),
+            ).to.eq(true)
+            expect(
+                await smt.computeRoot(
+                    bobsValue.leaf,
+                    bobsValue.index,
+                    bobsValue.enables,
+                    bobsValue.siblings,
+                ),
+            ).to.eq(merkleTree.root)
+        })
+
+        it('should update leaf correctly', async () => {
+            merkleTree.insert(BigInt(bob.address), hashString('cafe babe'))
+            const { value: v0 } = merkleTree.get(BigInt(bob.address))
+            expect(BigInt(v0!)).to.eq(hashString('cafe babe'))
+            // Update
+            merkleTree.update(BigInt(bob.address), hashString('dead beef'))
+            const { value: v1 } = merkleTree.get(BigInt(bob.address))
+            expect(BigInt(v1!)).to.eq(hashString('dead beef'))
+        })
+
+        it('should compute correct root after inserting', async () => {
+            expect(merkleTree.root).to.eq(ethers.ZeroHash)
+            const addresses = genAddresses(10)
+            for (let i = 0; i < addresses.length; i++) {
+                // Insert new leaf by updating the newly-inserted zero element with an actual value
+                const {
+                    leaf: oldLeaf,
+                    enables,
+                    siblings,
+                } = merkleTree.insert(BigInt(addresses[i]), hashString('hello, world!'))
+                const receipt = await smt
+                    .update(addresses[i], 'hello, world!', oldLeaf, enables, siblings)
+                    .then((tx) => tx.wait(1))
+                console.log(`[gas] updateRoot (d=${160}): ${receipt?.gasUsed}`)
+                expect(await smt.root()).to.eq(merkleTree.root)
+            }
         })
     })
 
